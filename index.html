@@ -6,6 +6,10 @@
     <title>お散歩アプリ プロトタイプ</title>
     <!-- Tailwind CSS CDNを読み込み -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet CSSを読み込み -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIINfQPDWS6rzY4Jp+Vill7zLwWH1T3SnyJ"
+        crossorigin=""/>
     <style>
         /* Interフォントを読み込み（Tailwindのデフォルトだが明示的に） */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -14,11 +18,13 @@
             background-color: #f0f8ff; /* 淡い青の背景 */
         }
         /* カスタムスタイル */
-        .map-placeholder {
-            background-color: #e0e0e0;
-            background-image: url('https://placehold.co/600x400/add8e6/4682b4?text=Map+Area'); /* 地図のプレースホルダー画像 */
-            background-size: cover;
-            background-position: center;
+        /* #mapの高さはTailwindクラス (h-full) で親のsectionから継承 */
+        #map {
+            /* Leaflet地図が表示される場所 */
+            /* w-full h-full は Tailwind CSS で設定されるため、ここでは追加の高さ指定は不要 */
+            border-radius: 1rem; /* rounded-xl と同じ */
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); /* shadow-md と同じ */
+            background-color: #e0e0e0; /* 地図読み込み中の背景色 */
         }
         .scroll-container {
             max-height: 150px; /* 案内のスクロールエリアの高さ制限 */
@@ -76,10 +82,9 @@
         </section>
 
         <!-- 地図表示エリア -->
-        <section class="relative w-full h-64 sm:h-80 bg-gray-200 rounded-xl shadow-md overflow-hidden map-placeholder flex items-center justify-center text-gray-600 font-bold text-xl">
-            <p class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-20 text-white text-center p-4 rounded-xl">
-                ここに地図が表示されるよ！<br>（プロトタイプではダミーだよ）
-            </p>
+        <!-- 親のsectionが高さを持つことで、中のdiv#mapがh-fullでその高さを継承する -->
+        <section class="relative w-full h-64 sm:h-80 rounded-xl shadow-md overflow-hidden">
+            <div id="map" class="w-full h-full"></div>
         </section>
 
         <!-- 音声案内と案内表示 -->
@@ -118,6 +123,11 @@
 
     </main>
 
+    <!-- Leaflet JavaScriptを読み込み -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20n6fxyVRPxIKz+gLIQWlYw+rPNm/VREx3T89w+DGaQ="
+        crossorigin=""></script>
+
     <script>
         // DOM要素の取得
         const distanceInput = document.getElementById('distanceInput');
@@ -131,6 +141,9 @@
 
         let currentRouteGuidance = []; // 生成されたルート案内テキストの配列
         let currentGuidanceIndex = 0; // 現在の案内インデックス
+
+        let map; // Leafletマップインスタンスを保持する変数
+        let currentMarker; // 現在地マーカーを保持する変数
 
         // メッセージボックスを表示する関数
         function showMessageBox(message) {
@@ -234,20 +247,46 @@
             }
         }
 
-        // 初期ロード時に現在地を取得（あくまで参考情報として）
-        // 実際のルート生成には使わないが、ユーザー体験向上のため
+        // Leafletマップを初期化する関数
+        function initializeMap(latitude, longitude) {
+            // マップが既に存在する場合は破棄して再作成
+            if (map) {
+                map.remove();
+            }
+            // 地図の中心を現在地（またはデフォルト）に設定し、ズームレベルを指定
+            map = L.map('map').setView([latitude, longitude], 15); // ズームレベル15
+
+            // OpenStreetMapのタイルレイヤーを追加
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+
+            // 現在地マーカーを追加
+            if (currentMarker) {
+                map.removeLayer(currentMarker); // 既存のマーカーを削除
+            }
+            currentMarker = L.marker([latitude, longitude]).addTo(map)
+                .bindPopup('現在地だよ！')
+                .openPopup();
+
+            // マップの表示を強制的に更新（一部環境で表示されない問題対策）
+            map.invalidateSize();
+        }
+
+        // 初期ロード時に現在地を取得し、マップを初期化
         window.onload = () => {
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(
                     (position) => {
-                        console.log('現在地を取得したよ！ 緯度:', position.coords.latitude, '経度:', position.coords.longitude);
-                        // ここで地図に現在地を表示することもできるけど、今回はダミー地図なので省略
+                        const lat = position.coords.latitude;
+                        const lon = position.coords.longitude;
+                        console.log('現在地を取得したよ！ 緯度:', lat, '経度:', lon);
+                        initializeMap(lat, lon); // 現在地でマップを初期化
                     },
                     (error) => {
                         console.error('現在地の取得に失敗したよ:', 'コード:', error.code, 'メッセージ:', error.message);
                         let errorMessage = '現在地の取得に失敗したよ。許可されているか確認してね！';
                         if (error.code === 1) {
-                            // セキュリティポリシーによる拒否の場合のメッセージを具体的に
                             if (error.message.includes('permissions policy')) {
                                 errorMessage = 'ごめんね！この環境では位置情報の利用がセキュリティポリシーで無効になっているみたい。通常のブラウザでは動くよ！';
                             } else {
@@ -259,13 +298,16 @@
                             errorMessage = '現在地の取得がタイムアウトしたよ。もう一度試してみてね！';
                         }
                         showMessageBox(errorMessage);
+                        // 現在地が取得できない場合は、東京駅周辺をデフォルトで表示
+                        initializeMap(35.681236, 139.767125); // 東京駅の緯度経度
                     },
-                    // タイムアウト時間を10秒に延長
                     { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
                 );
             } else {
                 console.warn('お使いのブラウザは位置情報に対応していません。');
                 showMessageBox('ごめんね、お使いのブラウザは位置情報に対応していないみたい...！');
+                // 位置情報に対応していない場合は、東京駅周辺をデフォルトで表示
+                initializeMap(35.681236, 139.767125); // 東京駅の緯度経度
             }
         };
 
